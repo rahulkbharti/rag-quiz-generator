@@ -1,0 +1,21 @@
+[project]
+name = "quiz-rag-backend"
+version = "0.1.0"
+description = "Enterprise-level RAG Quiz Generator Backend with FastAPI and LlamaIndex"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.28.0",
+    "pydantic>=2.0.0",
+    "python-multipart>=0.0.9",
+    "llama-index>=0.10.0",
+    "llama-index-llms-huggingface>=0.1.0",
+    "llama-index-embeddings-huggingface>=0.1.0",
+    "transformers>=4.38.0",
+    "bitsandbytes>=0.42.0",
+    "torch>=2.0.0",
+    "accelerate>=0.27.0",
+    "pypdf>=4.0.0",
+    "sentence-transformers>=2.5.0",
+]

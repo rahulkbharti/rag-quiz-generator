@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+.env
+
+# Data & Models cache
+data/*
+!data/.gitkeep
+.cache/
+huggingface/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.log
