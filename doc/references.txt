@@ -1,0 +1,2 @@
+https://developers.llamaindex.ai/llamaparse/
+https://mediapipe-studio.webapps.google.com/studio/demo/text_embedder

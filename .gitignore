@@ -12,6 +12,7 @@ ENV/
 # Data & Models cache
 data/*
 !data/.gitkeep
+storage/
 .cache/
 huggingface/
 

@@ -1,0 +1,88 @@
+{
+  "info": {
+    "_postman_id": "quiz-rag-backend-collection",
+    "name": "Quiz RAG Backend API",
+    "description": "Postman collection for RAG Quiz Generator Backend powered by FastAPI and Google Gemini / LlamaIndex",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Upload Document",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "description": "Upload a PDF document to index"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/upload-document/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "upload-document",
+            ""
+          ]
+        },
+        "description": "Upload a PDF document. The document will be saved in data/ folder and indexed for RAG."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Generate Quiz",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"topic\": \"Machine Learning\",\n  \"num_questions\": 5\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/generate-quiz/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "generate-quiz",
+            ""
+          ]
+        },
+        "description": "Generate multiple-choice quiz questions based on the uploaded documents."
+      },
+      "response": []
+    }
+  ]
+}

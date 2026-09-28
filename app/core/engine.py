@@ -1,39 +1,43 @@
 import os
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
-from llama_index.core.prompts import PromptTemplate
-from llama_index.llms.huggingface import HuggingFaceLLM
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
+from llama_index.core import (
+    VectorStoreIndex,
+    SimpleDirectoryReader,
+    Settings,
+    StorageContext,
+    load_index_from_storage,
+)
+from llama_index.llms.gemini import Gemini
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from transformers import BitsAndBytesConfig
 
 # Global State
 index = None
 query_engine = None
 DATA_DIR = "data"
+STORAGE_DIR = "storage"
 
 def initialize_rag():
     global index, query_engine
-    print("Loading Models... This might take a minute on Colab/GPU.")
-    
+    print(">>> Initializing RAG Engine...")
+
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-mpnet-base-v2")
-    
-    system_prompt = """You are an expert educational AI assistant. 
-    You must strictly follow the user's instructions and format your output exactly as requested."""
-    query_wrapper_prompt = PromptTemplate("<|USER|>{query_str}<|ASSISTANT|>")
-    
-    quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-    
-    llm = HuggingFaceLLM(
-        context_window=4096,
-        max_new_tokens=1500,
-        generate_kwargs={"temperature": 0.1, "do_sample": False},
-        system_prompt=system_prompt,
-        query_wrapper_prompt=query_wrapper_prompt,
-        tokenizer_name="meta-llama/Llama-2-7b-chat-hf",
-        model_name="meta-llama/Llama-2-7b-chat-hf",
-        device_map="auto",
-        model_kwargs={"quantization_config": quantization_config},
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("WARNING: GOOGLE_API_KEY is not set in environment or .env file!")
+
+    # 1. Superfast, quota-free local embedding model (80MB, runs smoothly on CPU, NO rate limits)
+    print("Loading fast embedding model (all-MiniLM-L6-v2)...")
+    embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+    # 2. Google Gemini LLM for fast quiz generation
+    print("Connecting to Google Gemini LLM...")
+    llm = Gemini(
+        model_name="models/gemini-2.5-flash",
+        api_key=api_key,
+        temperature=0.1
     )
 
     Settings.llm = llm
@@ -41,18 +45,33 @@ def initialize_rag():
     Settings.chunk_size = 1024
     Settings.chunk_overlap = 100
 
-    existing_files = os.listdir(DATA_DIR)
-    if len(existing_files) > 0:
-        docs = SimpleDirectoryReader(DATA_DIR).load_data()
-        index = VectorStoreIndex.from_documents(docs)
+    # 3. Load from storage if already indexed (Instant load!), else create index
+    if os.path.exists(STORAGE_DIR) and len(os.listdir(STORAGE_DIR)) > 0:
+        print("Loading cached vector index from storage (instant startup)...")
+        storage_context = StorageContext.from_defaults(persist_dir=STORAGE_DIR)
+        index = load_index_from_storage(storage_context)
     else:
-        index = VectorStoreIndex.from_documents([])
-        
+        pdf_files = [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".pdf")]
+        if len(pdf_files) > 0:
+            print(f"Indexing {len(pdf_files)} PDF(s) from '{DATA_DIR}' and caching to '{STORAGE_DIR}'...")
+            docs = SimpleDirectoryReader(DATA_DIR, required_exts=[".pdf"]).load_data()
+            index = VectorStoreIndex.from_documents(docs)
+            index.storage_context.persist(persist_dir=STORAGE_DIR)
+            print("Indexing completed and cached successfully!")
+        else:
+            print("No existing PDFs found. Initialized empty index ready for uploads.")
+            index = VectorStoreIndex.from_documents([])
+
     query_engine = index.as_query_engine(similarity_top_k=3)
-    print("RAG Engine is ready!")
+    print(">>> RAG Engine with Gemini is READY! <<<")
 
 def update_index(new_docs):
     global index, query_engine
     for doc in new_docs:
         index.insert(doc)
+    # Persist updated index to storage
+    index.storage_context.persist(persist_dir=STORAGE_DIR)
     query_engine = index.as_query_engine(similarity_top_k=3)
+
+
+
