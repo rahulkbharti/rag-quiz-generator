@@ -1,2 +1,4 @@
 https://developers.llamaindex.ai/llamaparse/
 https://mediapipe-studio.webapps.google.com/studio/demo/text_embedder
+https://www.geeksforgeeks.org/nlp/what-is-retrieval-augmented-generation-rag/
+https://www.zenml.io/blog/vector-databases-for-rag
