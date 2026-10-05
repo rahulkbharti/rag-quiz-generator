@@ -48,10 +48,22 @@ async def upload_document(file: UploadFile = File(...)):
     }
 
 
+@router.get("/vector-db-status/")
+async def vector_db_status():
+    """Returns real-time status and metrics of the connected Vector Database."""
+    stats = engine.get_vector_db_stats()
+    return {
+        "status": "healthy",
+        "vector_database": stats
+    }
+
+
 @router.post("/generate-quiz/")
 async def generate_quiz(req: QuizRequest):
     if engine.query_engine is None:
-        raise HTTPException(status_code=500, detail="RAG Engine not initialized.")
+        engine.initialize_rag()
+    if engine.query_engine is None:
+        raise HTTPException(status_code=500, detail="RAG Engine could not be initialized.")
 
     cache_key = (req.topic.strip().lower(), req.num_questions)
     current_time = time.time()

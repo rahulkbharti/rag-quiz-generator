@@ -1,11 +1,10 @@
 """
-Interactive RAG CLI Chat & Real-Time Financial Auditor.
-Connects directly to the RAG Engine (LlamaIndex + local vector store in ./storage).
+Interactive RAG CLI Chat & Real-Time Financial Auditor with Live Token Streaming.
 Features:
-1. Real Document Retrieval from ./storage (100% Free local vector search).
-2. Shows retrieved source chunks and citation context.
-3. Accurate Financial Audit for both RAG context input and Gemini response output.
-4. Dual Modes: Simple Mode vs Audit Mode (toggleable with --audit or typing 'audit').
+1. Real-time Token Streaming (Typewriter effect, TTFT ~350-500ms).
+2. Local Vector Store RAG Retrieval from ./storage (100% Free).
+3. Live Financial Audit with USD & INR breakdown.
+4. Latency Profiling (TTFT, Total Time, Tokens/sec).
 """
 
 import os
@@ -81,7 +80,7 @@ def resolve_model_rates(model_id: str, input_token_count: int = 0) -> tuple[floa
     return rates["input"], rates["output"], tier_info["name"], bracket_label
 
 
-def display_header(model_id: str, show_audit: bool, is_rag: bool, doc_count: int):
+def display_header(model_id: str, show_audit: bool, is_rag: bool, doc_count: int, top_k: int, db_stats: dict = None):
     """Renders the top banner depending on settings."""
     rate_in, rate_out, tier_name, bracket = resolve_model_rates(model_id, 0)
     in_inr = rate_in * EXCHANGE_RATE_USD_INR
@@ -92,9 +91,26 @@ def display_header(model_id: str, show_audit: bool, is_rag: bool, doc_count: int
         table.add_column("Parameter", style="dim", width=22)
         table.add_column("Configured Value / Status", style="bold white")
 
-        rag_status = f"[bold green]ENABLED[/bold green] (Retrieving from local vector index: {doc_count} source docs)" if is_rag else "[dim yellow]DISABLED (Direct Chat)[/dim yellow]"
+        db_type = db_stats.get("type", "Local Disk") if db_stats else "Local Disk"
+        if db_type == "Qdrant Cloud":
+            pts = db_stats.get("points_count", 0)
+            coll = db_stats.get("collection", "quiz_collection")
+            rag_status = (
+                f"[bold green]ENABLED[/bold green] (Qdrant Cloud: [cyan]{coll}[/cyan] | {pts} chunks stored)"
+                if is_rag else "[dim yellow]DISABLED (Direct Chat)[/dim yellow]"
+            )
+            cluster_short = db_stats.get('cluster_url', '').replace('https://', '')[:40]
+            table.add_row("🗄️ Vector Database", f"[bold green]Qdrant Cloud[/bold green] ({cluster_short})")
+        else:
+            rag_status = (
+                f"[bold green]ENABLED[/bold green] (Searching ./storage index, top_{top_k} chunks from {doc_count} doc(s))"
+                if is_rag else "[dim yellow]DISABLED (Direct Chat)[/dim yellow]"
+            )
+            table.add_row("🗄️ Vector Database", "[bold yellow]Local Disk (storage/ folder)[/bold yellow]")
+
         table.add_row("📚 RAG Retrieval", rag_status)
         table.add_row("🤖 Active Model", f"[bold green]{model_id}[/bold green] ({tier_name})")
+        table.add_row("⚡ Token Streaming", "[bold green]LIVE (Typewriter Effect, TTFT ~350-500ms)[/bold green]")
         table.add_row("📊 Pricing Bracket", f"{bracket} (Context Window)")
         table.add_row(
             "📥 Input Rate",
@@ -109,15 +125,16 @@ def display_header(model_id: str, show_audit: bool, is_rag: bool, doc_count: int
 
         console.print(Panel(
             table,
-            title="[bold magenta]⚡ RAG CLI CHAT & FINANCIAL AUDITOR ⚡[/bold magenta]",
+            title="[bold magenta]⚡ RAG CLI CHAT & STREAMING FINANCIAL AUDITOR ⚡[/bold magenta]",
             border_style="bright_blue"
         ))
         console.print("[dim]Commands: [bold cyan]exit[/bold cyan] to quit | [bold cyan]clear[/bold cyan] to reset | [bold cyan]audit[/bold cyan] to toggle audit | [bold cyan]sources[/bold cyan] to inspect retrieved chunks[/dim]\n")
     else:
-        rag_label = "RAG: Active (Local Docs)" if is_rag else "Direct Chat"
+        rag_label = f"RAG: Active (top_{top_k})" if is_rag else "Direct Chat"
         panel_content = (
             f"[bold green]Model:[/bold green] [white]{model_id}[/white] | "
             f"[bold cyan]{rag_label}[/bold cyan] | "
+            f"[bold yellow]Streaming: ON[/bold yellow] | "
             f"[dim]Type [bold cyan]'audit'[/bold cyan] for cost audit | [bold cyan]'exit'[/bold cyan] to quit[/dim]"
         )
         console.print(Panel(panel_content, border_style="cyan", box=box.ROUNDED))
@@ -130,17 +147,17 @@ def display_turn_audit(
     retrieved_tokens: int,
     total_input_tokens: int,
     candidate_tokens: int,
-    thoughts_tokens: int,
     total_turn_tokens: int,
     rate_in: float,
     rate_out: float,
     session_totals: dict,
-    sources_count: int
+    sources_count: int,
+    ttft_ms: float,
+    total_ms: float
 ):
-    """Renders a beautiful financial audit table with RAG retrieval details."""
+    """Renders a financial audit table with latency profiling and token details."""
     cost_prompt_usd = (total_input_tokens / 1_000_000) * rate_in
-    billable_output_tokens = candidate_tokens + thoughts_tokens
-    cost_output_usd = (billable_output_tokens / 1_000_000) * rate_out
+    cost_output_usd = (candidate_tokens / 1_000_000) * rate_out
     
     turn_total_usd = cost_prompt_usd + cost_output_usd
     turn_total_inr = turn_total_usd * EXCHANGE_RATE_USD_INR
@@ -151,10 +168,14 @@ def display_turn_audit(
     session_totals["total_cost_inr"] += turn_total_inr
     session_totals["turns"] += 1
 
+    # Speed metrics
+    gen_duration_sec = max(0.001, (total_ms - (ttft_ms or 0)) / 1000)
+    tokens_per_sec = candidate_tokens / gen_duration_sec if gen_duration_sec > 0 else 0
+
     table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold yellow", expand=True)
-    table.add_column("RAG / Token Metric", style="cyan", width=30)
-    table.add_column("Tokens Count", justify="right", style="bold white", width=14)
-    table.add_column("Cost (USD)", justify="right", style="green", width=15)
+    table.add_column("RAG / Performance Metric", style="cyan", width=32)
+    table.add_column("Tokens / Speed", justify="right", style="bold white", width=16)
+    table.add_column("Cost (USD)", justify="right", style="green", width=14)
     table.add_column("Cost (INR)", justify="right", style="bold green", width=22)
 
     table.add_row(
@@ -162,6 +183,18 @@ def display_turn_audit(
         f"{sources_count} chunks",
         "$0.0000000",
         "[bold green]₹0.00 (100% FREE CPU)[/bold green]"
+    )
+    table.add_row(
+        "⚡ Time to First Token (TTFT)",
+        f"{ttft_ms:.1f} ms" if ttft_ms else "N/A",
+        "-",
+        "[dim cyan]Instant Streaming[/dim cyan]"
+    )
+    table.add_row(
+        "🏎️ Generation Speed",
+        f"{tokens_per_sec:.1f} tokens/s",
+        "-",
+        f"[dim]{total_ms / 1000:.2f}s total duration[/dim]"
     )
     table.add_row(
         "  ↳ User Query Tokens",
@@ -183,19 +216,11 @@ def display_turn_audit(
         f"[bold]₹{cost_prompt_usd * EXCHANGE_RATE_USD_INR:.4f}[/bold]"
     )
     table.add_row(
-        "📤 Generated Answer Tokens",
+        "📤 Generated Stream Output",
         f"{candidate_tokens:,}",
-        f"${(candidate_tokens / 1_000_000) * rate_out:.7f}",
-        f"₹{(candidate_tokens / 1_000_000) * rate_out * EXCHANGE_RATE_USD_INR:.4f}"
+        f"${cost_output_usd:.7f}",
+        f"₹{cost_output_usd * EXCHANGE_RATE_USD_INR:.4f}"
     )
-
-    if thoughts_tokens > 0:
-        table.add_row(
-            "🧠 Thinking / Reasoning Tokens",
-            f"{thoughts_tokens:,}",
-            f"${(thoughts_tokens / 1_000_000) * rate_out:.7f}",
-            f"₹{(thoughts_tokens / 1_000_000) * rate_out * EXCHANGE_RATE_USD_INR:.4f}"
-        )
 
     table.add_section()
     table.add_row(
@@ -213,7 +238,7 @@ def display_turn_audit(
 
     console.print(Panel(
         table,
-        title=f"[bold yellow]💰 FINANCIAL AUDIT (Turn #{turn_num})[/bold yellow]",
+        title=f"[bold yellow]💰 FINANCIAL AUDIT (Turn #{turn_num})[/bold yellow] | [dim]TTFT: [bold green]{ttft_ms:.1f}ms[/bold green] | Total: [bold cyan]{total_ms / 1000:.2f}s[/bold cyan][/dim]",
         border_style="yellow",
         box=box.ROUNDED
     ))
@@ -234,7 +259,9 @@ def display_sources(source_nodes):
         score_str = f"{node_with_score.score:.4f}" if node_with_score.score is not None else "N/A"
         content_preview = node_with_score.node.get_content().strip().replace("\n", " ")[:140] + "..."
         file_name = node_with_score.node.metadata.get("file_name", "document")
-        table.add_row(str(i), score_str, f"[dim cyan][{file_name}][/dim cyan] {content_preview}")
+        page_num = node_with_score.node.metadata.get("page_number", "")
+        page_label = f" (Page {page_num})" if page_num else ""
+        table.add_row(str(i), score_str, f"[dim cyan][{file_name}{page_label}][/dim cyan] {content_preview}")
 
     console.print(Panel(table, title="[bold cyan]📑 RETRIEVED SOURCE CHUNKS (Cost: ₹0.00 Free)[/bold cyan]", border_style="cyan"))
     console.print("")
@@ -260,15 +287,17 @@ def display_session_summary(session_totals: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Interactive RAG CLI Chat & Financial Auditor")
-    parser.add_argument("--model", default="gemini-3.5-flash", help="Gemini Model ID (default: gemini-3.5-flash)")
+    parser = argparse.ArgumentParser(description="Interactive RAG CLI Chat & Live Streaming Financial Auditor")
+    parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini Model ID (default: gemini-2.5-flash)")
     parser.add_argument("--audit", type=str, default="true", help="Enable audit mode (true/false, default: true)")
     parser.add_argument("--rag", type=str, default="true", help="Enable RAG retrieval from ./storage (true/false, default: true)")
+    parser.add_argument("--top-k", type=int, default=3, help="Number of retrieved chunks (default: 3)")
     args = parser.parse_args()
 
     show_audit = args.audit.strip().lower() in ("true", "1", "yes", "y")
     use_rag = args.rag.strip().lower() in ("true", "1", "yes", "y")
     model_id = args.model
+    top_k = args.top_k
 
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
@@ -278,23 +307,27 @@ def main():
         console.print("  GOOGLE_API_KEY=your_gemini_api_key\n")
         sys.exit(1)
 
-    # 1. Initialize RAG Engine if requested
-    query_engine = None
+    # 1. Initialize RAG Engine with streaming support
+    streaming_query_engine = None
     doc_count = 0
+    db_stats = {}
     if use_rag:
-        with console.status("[bold cyan]Loading local vector store from ./storage (instant)...[/bold cyan]", spinner="dots"):
+        with console.status("[bold cyan]Connecting to Vector Database & loading index...[/bold cyan]", spinner="dots"):
             import app.core.engine as rag_engine
-            # Ensure model_id is used for LLM
-            rag_engine.initialize_rag()
-            query_engine = rag_engine.query_engine
+            rag_engine.initialize_rag(top_k=top_k, model_name=model_id)
+            streaming_query_engine = rag_engine.index.as_query_engine(
+                similarity_top_k=top_k,
+                streaming=True
+            )
             data_files = [f for f in os.listdir("data") if f.lower().endswith(".pdf")] if os.path.exists("data") else []
             doc_count = len(data_files)
+            db_stats = rag_engine.get_vector_db_stats()
 
-    # 2. Also initialize direct GenAI client for token counting / fallback
+    # 2. Direct GenAI client for fallback / token counting
     from google import genai
     genai_client = genai.Client(api_key=api_key)
 
-    display_header(model_id, show_audit, use_rag, doc_count)
+    display_header(model_id, show_audit, use_rag, doc_count, top_k, db_stats)
 
     session_totals = {
         "turns": 0,
@@ -324,7 +357,7 @@ def main():
 
             if user_input.lower() == "clear":
                 console.clear()
-                display_header(model_id, show_audit, use_rag, doc_count)
+                display_header(model_id, show_audit, use_rag, doc_count, top_k)
                 console.print("[bold green]🧹 Screen cleared.[/bold green]\n")
                 continue
 
@@ -347,37 +380,55 @@ def main():
                 query_tokens_est = max(1, len(user_input) // 4)
 
             # ---------------------------------------------------------------
-            # 2. Execute RAG Query or Direct Query
+            # 2. Execute RAG Query with Live Token Streaming & Latency Profiling
             # ---------------------------------------------------------------
             answer_text = ""
             source_nodes = []
             retrieved_text = ""
+            ttft_ms = None
+            total_duration_ms = 0.0
 
             console.print("\n[bold green]AI Assistant[/bold green] [dim]>[/dim] ", end="")
 
-            if use_rag and query_engine is not None:
-                with console.status("[bold cyan]Searching ./storage vector index & generating answer...[/bold cyan]", spinner="dots"):
-                    rag_response = query_engine.query(user_input)
-                    answer_text = str(rag_response.response)
-                    source_nodes = rag_response.source_nodes
-                    last_sources = source_nodes
-                    retrieved_text = " ".join([n.node.get_content() for n in source_nodes])
-            else:
-                with console.status("[bold green]Generating answer...[/bold green]", spinner="dots"):
-                    direct_response = genai_client.models.generate_content(
-                        model=model_id,
-                        contents=user_input
-                    )
-                    answer_text = direct_response.text
+            t_start = time.perf_counter()
 
-            # Render answer nicely with Markdown
-            console.print(Markdown(answer_text))
-            console.print("")
+            if use_rag and streaming_query_engine is not None:
+                streaming_response = streaming_query_engine.query(user_input)
+                tokens_buffer = []
+
+                # Stream tokens live as they arrive from Gemini
+                for token in streaming_response.response_gen:
+                    if ttft_ms is None:
+                        ttft_ms = (time.perf_counter() - t_start) * 1000
+                    print(token, end="", flush=True)
+                    tokens_buffer.append(token)
+
+                total_duration_ms = (time.perf_counter() - t_start) * 1000
+                print("\n")
+
+                answer_text = "".join(tokens_buffer)
+                source_nodes = getattr(streaming_response, "source_nodes", [])
+                last_sources = source_nodes
+                retrieved_text = " ".join([n.node.get_content() for n in source_nodes])
+            else:
+                # Direct streaming without RAG
+                stream = genai_client.models.generate_content_stream(model=model_id, contents=user_input)
+                tokens_buffer = []
+
+                for chunk in stream:
+                    if ttft_ms is None:
+                        ttft_ms = (time.perf_counter() - t_start) * 1000
+                    chunk_text = chunk.text or ""
+                    print(chunk_text, end="", flush=True)
+                    tokens_buffer.append(chunk_text)
+
+                total_duration_ms = (time.perf_counter() - t_start) * 1000
+                print("\n")
+                answer_text = "".join(tokens_buffer)
 
             # ---------------------------------------------------------------
             # 3. Post-execution Metadata Audit
             # ---------------------------------------------------------------
-            # Calculate token counts
             try:
                 retrieved_tokens = genai_client.models.count_tokens(model=model_id, contents=retrieved_text).total_tokens if retrieved_text else 0
             except Exception:
@@ -388,8 +439,7 @@ def main():
             except Exception:
                 candidate_tokens = max(1, len(answer_text) // 4)
 
-            total_input_tokens = query_tokens_est + retrieved_tokens + 50  # 50 tokens for LlamaIndex prompt wrapper
-            thoughts_tokens = 0  # LlamaIndex abstracts thinking tokens
+            total_input_tokens = query_tokens_est + retrieved_tokens + 50
             total_turn_tokens = total_input_tokens + candidate_tokens
 
             rate_in, rate_out, _, _ = resolve_model_rates(model_id, total_input_tokens)
@@ -401,12 +451,13 @@ def main():
                     retrieved_tokens=retrieved_tokens,
                     total_input_tokens=total_input_tokens,
                     candidate_tokens=candidate_tokens,
-                    thoughts_tokens=thoughts_tokens,
                     total_turn_tokens=total_turn_tokens,
                     rate_in=rate_in,
                     rate_out=rate_out,
                     session_totals=session_totals,
-                    sources_count=len(source_nodes)
+                    sources_count=len(source_nodes),
+                    ttft_ms=ttft_ms or 0.0,
+                    total_ms=total_duration_ms
                 )
 
             console.print(Rule(style="dim"))

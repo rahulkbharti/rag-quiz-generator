@@ -83,6 +83,30 @@
         "description": "Generate multiple-choice quiz questions based on the uploaded documents."
       },
       "response": []
+    },
+    {
+      "name": "3. Vector DB Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/vector-db-status/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "vector-db-status",
+            ""
+          ]
+        },
+        "description": "Inspect real-time health, points count, and collection status of connected Qdrant Cloud Vector Database."
+      },
+      "response": []
     }
   ]
 }
