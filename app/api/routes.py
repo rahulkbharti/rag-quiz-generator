@@ -33,7 +33,7 @@ async def upload_document(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         print(f"Processing new document: {file.filename}")
-        new_docs = SimpleDirectoryReader(input_files=[file_path]).load_data()
+        new_docs = engine.extract_pdf_documents(file_path)
         engine.update_index(new_docs)
         return len(new_docs)
 
